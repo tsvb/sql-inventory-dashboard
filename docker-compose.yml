@@ -1,0 +1,21 @@
+ version: '3.9'
+
+services:
+  sql-inventory-dashboard:
+    image: sql-inventory-dashboard:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inventory-ui
+    ports:
+      - "5000:5000"
+    volumes:
+      - inventory-logs:/app/logs
+      - inventory-output:/app/output
+    environment:
+      - POWERSHELL_DASHBOARD_FILE=/app/universal/dashboard.ps1
+    restart: unless-stopped
+
+volumes:
+  inventory-logs:
+  inventory-output:
