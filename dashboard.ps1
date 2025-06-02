@@ -49,7 +49,7 @@
             }
         } | Out-String
 
-        $inventoryScriptPath = "C:\\Scripts\\Run-SqlInventory.ps1"
+        $inventoryScriptPath = "/app/scripts/Run-SqlInventory.ps1"
         $cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$inventoryScriptPath`" $paramStr"
 
         Invoke-Expression $cmd | Out-Null

@@ -1,0 +1,57 @@
+name: Deploy SQL Inventory Dashboard
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/sql-inventory-dashboard:latest # Assumes Docker Hub username is the repo owner for the image
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' # Only deploy from main branch
+    steps:
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            echo "Logging into Docker to pull the latest image..."
+            docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
+
+            echo "Stopping and removing old container if it exists..."
+            docker stop sql-inventory-dashboard || true
+            docker rm sql-inventory-dashboard || true
+
+            echo "Pulling the latest image..."
+            docker pull ${{ secrets.DOCKER_USERNAME }}/sql-inventory-dashboard:latest
+
+            echo "Running the new container..."
+            docker run -d --name sql-inventory-dashboard -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/sql-inventory-dashboard:latest
+
+            echo "Deployment complete."
