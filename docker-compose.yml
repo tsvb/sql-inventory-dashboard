@@ -12,8 +12,6 @@ services:
     volumes:
       - inventory-logs:/app/logs
       - inventory-output:/app/output
-    environment:
-      - POWERSHELL_DASHBOARD_FILE=/app/universal/dashboard.ps1
     restart: unless-stopped
 
 volumes:

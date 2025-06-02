@@ -41,8 +41,12 @@ param(
     })][string]$OutputPath,
     [string]$LogPath,
     [ValidateSet(1,2,4,8,16,32)][int]$ThrottleLimit = 1,
-    [System.Management.Automation.PSCredential]$SqlCredential,
-    [System.Management.Automation.PSCredential]$Credential, # For OS-level access (WMI/CIM)
+    [string]$SqlUsername,
+    [string]$SqlPassword,
+    [string]$OsUsername,
+    [string]$OsPassword,
+    [System.Management.Automation.PSCredential]$DirectSqlCredentialInput, # Renamed from SqlCredential
+    [System.Management.Automation.PSCredential]$DirectOsCredentialInput, # Renamed from Credential
     [int]$CommandTruncateLength = 120,
     [int]$QueryTimeout          = 120,
     [int]$TopTablesCount        = 20,
@@ -65,12 +69,31 @@ if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
     throw "CRITICAL: Invoke-Sqlcmd command not found. Please ensure the 'SqlServer' PowerShell module is installed and imported. Script cannot continue."
 }
 
-# Credential Warnings
-if (-not $Credential) {
-    Write-Warning "No OS credential (-Credential) provided. Remote WMI/CIM operations might fail if the current user context lacks permissions on target servers."
+# Determine effective credentials
+$EffectiveSqlCredential = $null
+if ($SqlUsername -and $SqlPassword) {
+    $EffectiveSqlCredential = New-Object System.Management.Automation.PSCredential($SqlUsername, (ConvertTo-SecureString $SqlPassword -AsPlainText -Force))
+    Write-Log "Using SQL credentials provided via SqlUsername/SqlPassword parameters."
+} elseif ($DirectSqlCredentialInput) {
+    $EffectiveSqlCredential = $DirectSqlCredentialInput
+    Write-Log "Using SQL credentials provided via DirectSqlCredentialInput parameter."
 }
-if (-not $SqlCredential) {
-    Write-Warning "No SQL credential (-SqlCredential) provided. SQL Server connections will attempt to use the current user's integrated security. This might fail if the user context lacks SQL permissions."
+
+$EffectiveOsCredential = $null
+if ($OsUsername -and $OsPassword) {
+    $EffectiveOsCredential = New-Object System.Management.Automation.PSCredential($OsUsername, (ConvertTo-SecureString $OsPassword -AsPlainText -Force))
+    Write-Log "Using OS credentials provided via OsUsername/OsPassword parameters."
+} elseif ($DirectOsCredentialInput) {
+    $EffectiveOsCredential = $DirectOsCredentialInput
+    Write-Log "Using OS credentials provided via DirectOsCredentialInput parameter."
+}
+
+# Credential Warnings
+if (-not $EffectiveOsCredential) {
+    Write-Warning "No effective OS credential available. Remote WMI/CIM operations might fail if the current user context lacks permissions on target servers."
+}
+if (-not $EffectiveSqlCredential) {
+    Write-Warning "No effective SQL credential available. SQL Server connections will attempt to use the current user's integrated security. This might fail if the user context lacks SQL permissions."
 }
 #endregion
 
@@ -134,7 +157,7 @@ function Export-InventoryData {
             }
         }
     }
-    if(-not (Test-Path $file) -and -not $IsDryRun){$Bag.Add("VERIFY-FAIL (File not created) $file (Server: `$Stamp)")}
+    if(-not (Test-Path $file) -and -not $IsDryRun){$Bag.Add("VERIFY-FAIL (File not created) $file (Server: $Stamp)")}
 }
 "@
 Import-Module (New-Module -Name SqlInvHelpers -ScriptBlock ([scriptblock]::Create($helperModule))) -Force
@@ -152,8 +175,8 @@ $serverScript = {
     param(
         [string]$Srv, 
         [string]$MainOutputPath,
-        [System.Management.Automation.PSCredential]$PassedSqlCredential,
-        [System.Management.Automation.PSCredential]$PassedOsCredential,
+        [System.Management.Automation.PSCredential]$PassedSqlCredential, # This will be $EffectiveSqlCredential from parent
+        [System.Management.Automation.PSCredential]$PassedOsCredential,   # This will be $EffectiveOsCredential from parent
         [int]$PassedCommandTruncateLength,
         [int]$PassedQueryTimeout,
         # [int]$PassedTopTablesCount, # Not used in current example collections
@@ -307,7 +330,7 @@ Write-Log "Starting server processing at $executionStartTime"
 if($ThrottleLimit -gt 1 -and $PSVersionTable.PSVersion.Major -ge 7){
     Write-Log "Running in PARALLEL mode with throttle limit: $ThrottleLimit for $($ServerNames.Count) servers." 'INFO'
     $ServerNames | ForEach-Object -Parallel $serverScript -ThrottleLimit $ThrottleLimit 
-        -ArgumentList $_, $OutputPath, $SqlCredential, $Credential, $CommandTruncateLength, 
+        -ArgumentList $_, $OutputPath, $EffectiveSqlCredential, $EffectiveOsCredential, $CommandTruncateLength,
                       $QueryTimeout, $ExportSliceSize, $ExportBackoffMS, $SkipCollections, 
                       $ErrBag, $SuccessBag, $MaxServerSeconds, $Global:LogFile, $DryRun # Removed TopTables, BackupHistoryDays as not used in example
 } else {
@@ -319,7 +342,7 @@ if($ThrottleLimit -gt 1 -and $PSVersionTable.PSVersion.Major -ge 7){
         try {
             # Note: $TopTablesCount and $BackupHistoryDays are not used in the current $serverScript examples.
             # If you add collections that use them, ensure they are passed here too.
-            & $serverScript $s $OutputPath $SqlCredential $Credential $CommandTruncateLength 
+            & $serverScript $s $OutputPath $EffectiveSqlCredential $EffectiveOsCredential $CommandTruncateLength
                            $QueryTimeout $ExportSliceSize $ExportBackoffMS $SkipCollections 
                            $ErrBag $SuccessBag $MaxServerSeconds $Global:LogFile $DryRun
         } catch {
